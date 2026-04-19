@@ -1,0 +1,15 @@
+name = "ProvableSec"
+version = "0.1.0"
+defaultTargets = ["provablesec"]
+
+[[lean_lib]]
+name = "ProvableSec"
+
+[[lean_exe]]
+name = "provablesec"
+root = "Main"
+
+[[require]]
+name = "mathlib"
+git = "https://github.com/leanprover-community/mathlib4.git"
+rev = "master"
