@@ -5,7 +5,7 @@ import ProvableSec.Defination.Baisc.TuringMachine.TMCrypto
 import ProvableSec.Defination.Baisc.Complexity.ComplexityClass
 import ProvableSec.Defination.OneWayFunction.owfBasic
 import ProvableSec.Defination.CryptoNotation
-import ProvableSec.ClassicTheorem.YaoTheorem
+import ProvableSec.ClassicTheorem.OWF.YaoTheorem
 import ProvableSec.Examples
 
 /-!
