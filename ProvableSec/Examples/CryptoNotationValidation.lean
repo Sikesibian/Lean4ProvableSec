@@ -1,73 +1,41 @@
 import ProvableSec.Defination.CryptoNotation
-import ProvableSec.ClassicTheorem.YaoTheorem
 
 /-!
 # CryptoNotation Validation Examples
 
-中文：验证全局概率语义接口的基本性质，并验证 Yao 层接口可用。
-English: validate basic properties of global semantics and Yao-layer interfaces.
+中文：验证抽象接口层的类型透明度与定义等价性。
+English: Validate type transparency and definitional equality of the abstract interface layer.
 -/
 
 namespace ProvableSec.Examples
 
+open TuringMachine.Crypto
+open OneWayFunction
 open ProvableSec.CryptoNotation
 open scoped CryptoNotation
 
-section GlobalSemanticsValidation
+section SecurityValidation
 
-variable (C : Context)
-variable (M : Context.Model C)
-variable (A : Context.Adversary C)
+variable {K Λ σ : Type} [DecidableEq K] [Inhabited Λ] [Inhabited σ]
+variable (F : OWFFamily)
+variable (A : BitPPTAdversary)
 variable (n : Nat)
 
-example :
-    PrFail[M](A, n) = 1 - Pr[M](A, n) := by
-  simpa using M.PrFail_eq A n
+-- 验证宏展开后与底层反演成功率函数的定义完全等价 (Defeq)
+example : Pr[F](A, n) = inversionSuccessProb F A n := by
+  rfl
 
-example :
-    0 ≤ Pr[M](A, n) := by
-  simpa using M.Pr_nonneg A n
+example : PrFail[F](A, n) = failureProb F A n := by
+  rfl
 
-example :
-    Pr[M](A, n) ≤ 1 := by
-  simpa using M.Pr_le_one A n
+-- 验证 Weak 简写与底层 IsWeakOWF 的无缝对接
+example : Weak F ↔ IsWeakOWF F := by
+  rfl
 
-end GlobalSemanticsValidation
+-- 验证 Strong 简写与底层 IsStrongOWF 的无缝对接
+example : Strong F ↔ IsStrongOWF F := by
+  rfl
 
-section YaoValidation
-
-variable (C : Context)
-variable (M : Context.Yao.Model C)
-variable (R : Context.Yao.ReductionSpec C M)
-variable (hRed : Context.Yao.ReductionCorrect C M R)
-variable (P : Context.Yao.ProofPlan C M)
-
-example :
-    Context.Yao.weak_to_strong_transform C M →
-      Context.Yao.weak_to_strong_existential C M := by
-  intro h
-  exact Context.Yao.transform_implies_existential C M h
-
-example :
-    Context.Yao.weak_to_strong_same_family C M →
-      Context.Yao.weak_to_strong_transform C M := by
-  intro h
-  exact Context.Yao.same_family_implies_transform C M h
-
-example :
-    Context.Yao.ReductionCorrect C M R →
-      Context.Yao.weak_to_strong_transform C M := by
-  intro h
-  exact Context.Yao.reductionCorrect_implies_transform C M R h
-
-example :
-    Context.Yao.weak_to_strong_transform C M := by
-  exact Context.Yao.plan_implies_transform C M P
-
-example :
-    Context.Yao.weak_to_strong_existential C M := by
-  exact Context.Yao.plan_implies_existential C M P
-
-end YaoValidation
+end SecurityValidation
 
 end ProvableSec.Examples

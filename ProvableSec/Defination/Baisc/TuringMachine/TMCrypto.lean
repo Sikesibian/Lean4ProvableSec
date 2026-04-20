@@ -1,5 +1,7 @@
 import Mathlib.Computability.TuringMachine.StackTuringMachine
 import Mathlib.Computability.StateTransition
+import Mathlib.Data.Real.Basic
+import Mathlib.Data.Finset.Basic
 
 /-!
 # 密码学图灵机接口 / Crypto TM Interface
@@ -133,20 +135,12 @@ def initCfgWithCoins [DecidableEq K] [Inhabited Λ] [Inhabited σ]
 执行固定步数，若机器提前停机则保持当前配置不再变化。
 bounded-step execution; once halted, the configuration is kept unchanged.
 -/
-def runCfgFor (M : Machine K Λ σ α) [DecidableEq K] : Nat → Cfg K Λ σ α → Cfg K Λ σ α
+def runCfgForSteps (M : Machine K Λ σ α) [DecidableEq K] : Nat → Cfg K Λ σ α → Cfg K Λ σ α
   | 0, c => c
   | n + 1, c =>
       match TM2.step M c with
       | none => c
-      | some c' => runCfgFor M n c'
-
-/--
-带输入与随机币的有界执行。
-bounded execution with input and random coins.
--/
-def runWithCoinsFor (M : Machine K Λ σ α) [DecidableEq K] [Inhabited Λ] [Inhabited σ]
-    (inputStack coinStack : K) (steps : Nat) (x r : List α) : Cfg K Λ σ α :=
-  runCfgFor M steps (initCfgWithCoins (K := K) (Λ := Λ) (σ := σ) (α := α) inputStack coinStack x r)
+      | some c' => runCfgForSteps M n c'
 
 /--
 带输入与随机币的“运行到停机”语义，输出来自指定输出栈。
@@ -155,8 +149,7 @@ run-to-completion semantics with input and random coins; output is read from a c
 def evalWithCoins (M : Machine K Λ σ α) [DecidableEq K] [Inhabited Λ] [Inhabited σ]
     (inputStack coinStack outputStack : K) (x r : List α) : Part (List α) :=
   (StateTransition.eval (TM2.step M)
-      (initCfgWithCoins (K := K) (Λ := Λ) (σ := σ) (α := α) inputStack coinStack x r)).map
-    (fun c => c.stk outputStack)
+      (initCfgWithCoins inputStack coinStack x r)).map (fun c => c.stk outputStack)
 
 end Core
 
@@ -202,26 +195,10 @@ def run (A : Adversary K Λ σ α) [DecidableEq K] [Inhabited Λ] [Inhabited σ]
 敌手在给定步数内的配置。
 adversary configuration after a bounded number of steps.
 -/
-def runFor (A : Adversary K Λ σ α) [DecidableEq K] [Inhabited Λ] [Inhabited σ]
+def runForSteps (A : Adversary K Λ σ α) [DecidableEq K] [Inhabited Λ] [Inhabited σ]
     (steps : Nat) (x r : List α) : Cfg K Λ σ α :=
-  runWithCoinsFor (K := K) (Λ := Λ) (σ := σ) (α := α)
-    A.machine A.inputStack A.coinStack steps x r
-
-/--
-有界执行后的输出栈内容。
-output stack content after bounded execution.
--/
-def outputAfter (A : Adversary K Λ σ α) [DecidableEq K] [Inhabited Λ] [Inhabited σ]
-    (steps : Nat) (x r : List α) : List α :=
-  (A.runFor (steps := steps) x r).stk A.outputStack
-
-/--
-在给定步数内停机（标签为 `none`）。
-halts within the given step bound (label is `none`).
--/
-def haltsWithin (A : Adversary K Λ σ α) [DecidableEq K] [Inhabited Λ] [Inhabited σ]
-    (steps : Nat) (x r : List α) : Prop :=
-  (A.runFor (steps := steps) x r).l = none
+  runCfgForSteps (K := K) (Λ := Λ) (σ := σ) (α := α)
+    A.machine steps (initCfgWithCoins (K := K) (Λ := Λ) (σ := σ) (α := α) A.inputStack A.coinStack x r)
 
 end Adversary
 
@@ -257,12 +234,12 @@ structure PPTAdversary (K : Type u) (Λ : Type w) (σ : Type z) (α : Type v)
   adv : Adversary K Λ σ α
   coinLength : Nat → Nat
   timeBound : Nat → Nat
-  timeBound_poly : IsPolynomial timeBound
-  halts_timeBound :
+  timeBoundPoly : IsPolynomial timeBound
+  haltsAtBound :
     ∀ n (x r : List α),
       x.length = n →
       r.length = coinLength n →
-      (adv.runFor (steps := timeBound n) x r).l = none
+      (adv.runForSteps (timeBound n) x r).l = none
 
 namespace PPTAdversary
 
@@ -283,29 +260,99 @@ instantiated bounded-halting fact at the machine time bound.
 theorem halts_at_bound (A : PPTAdversary K Λ σ α)
     (n : Nat) (x r : List α)
     (hx : x.length = n) (hr : r.length = A.coinLength n) :
-    (A.adv.runFor (steps := A.timeBound n) x r).l = none :=
-  A.halts_timeBound n x r hx hr
+    (A.adv.runForSteps (A.timeBound n) x r).l = none :=
+  A.haltsAtBound n x r hx hr
 
 end PPTAdversary
 
-/-- 比特串敌手别名。bitstring adversary alias. -/
-abbrev BitAdversary (K : Type u) (Λ : Type w) (σ : Type z) : Type (max u w z) :=
-  Adversary K Λ σ Bool
-
-/-- 比特串 PPT 敌手别名。bitstring PPT adversary alias. -/
-abbrev BitPPTAdversary (K : Type u) (Λ : Type w) (σ : Type z)
-    [DecidableEq K] [Inhabited Λ] [Inhabited σ] : Type (max u w z) :=
-  PPTAdversary K Λ σ Bool
+/--
+打包的比特串普通敌手。
+此时 K, Λ, σ 成为了结构的内部字段，不再对外暴露为泛型参数。
+-/
+structure BitAdversary where
+  K : Type
+  Λ : Type
+  σ : Type
+  [decK : DecidableEq K]
+  [inhΛ : Inhabited Λ]
+  [inhσ : Inhabited σ]
+  adv : Adversary K Λ σ Bool
 
 /--
-给定固定随机币时，对单向函数反演成功的谓词模板。
-template predicate for inversion success against an OWF under fixed coins.
+打包的比特串 PPT 敌手。
+它自我包含了一个合法的图灵机定义以及所有类型约束。
 -/
-def invertsWithCoins {K : Type u} {Λ : Type w} {σ : Type z}
-    [DecidableEq K] [Inhabited Λ] [Inhabited σ]
-    (A : BitAdversary K Λ σ) (f : List Bool → List Bool)
-    (x r : List Bool) : Prop :=
-  x ∈ A.run (f x) r
+structure BitPPTAdversary where
+  K : Type
+  Λ : Type
+  σ : Type
+  [decK : DecidableEq K]
+  [inhΛ : Inhabited Λ]
+  [inhσ : Inhabited σ]
+  adv : Adversary K Λ σ Bool
+  coinLength : Nat → Nat
+  timeBound : Nat → Nat
+  timeBoundPoly : IsPolynomial timeBound
+  haltsAtBound :
+    ∀ n (x r : List Bool),
+      x.length = n →
+      r.length = coinLength n →
+      -- 显式调用内部打包的实例以通过类型校验
+      (@Adversary.runForSteps K Λ σ Bool adv decK inhΛ inhσ (timeBound n) x r).l = none
+
+namespace BitPPTAdversary
+
+/-- 隐藏类型类推导的敌手执行函数。 -/
+def run (A : BitPPTAdversary) (x r : List Bool) : Part (List Bool) :=
+  @Adversary.run A.K A.Λ A.σ Bool A.adv A.decK A.inhΛ A.inhσ x r
+
+theorem halts_at_bound (A : BitPPTAdversary) (n : Nat) (x r : List Bool)
+    (hx : x.length = n) (hr : r.length = A.coinLength n) :
+    (@Adversary.runForSteps A.K A.Λ A.σ Bool A.adv A.decK A.inhΛ A.inhσ (A.timeBound n) x r).l = none :=
+  A.haltsAtBound n x r hx hr
+
+end BitPPTAdversary
+
+section ProbabilisticSemantics
+
+def allCoins (n : Nat) : Finset (List Bool) :=
+  (Finset.univ : Finset (Fin n → Bool)).image List.ofFn
+
+namespace BitPPTAdversary
+
+/-- 计算 PPT 敌手在输入 x 下，输出特定结果 y 的确切概率。 -/
+noncomputable def probOutput (A : BitPPTAdversary) (x y : List Bool) : ℝ :=
+  by
+  classical
+  exact
+    let n := x.length
+    let coins := allCoins (A.coinLength n)
+    let totalCoins := coins.card
+    if totalCoins = 0 then 0 else
+      let successCoins := coins.filter (fun r =>
+        match Part.toOption (A.run x r) with
+        | Option.some res => res = y
+        | Option.none => false
+      )
+      (successCoins.card : ℝ) / (totalCoins : ℝ)
+/-- 计算 PPT 敌手 A 在输入 x 下，其输出满足特定谓词 P 的概率。 -/
+noncomputable def probEvent (A : BitPPTAdversary) (x : List Bool) (P : List Bool → Prop) [DecidablePred P] : ℝ :=
+  by
+  classical
+  exact
+    let n := x.length
+    let coins := allCoins (A.coinLength n)
+    let totalCoins := coins.card
+    if totalCoins = 0 then 0 else
+      let successCoins := coins.filter (fun r =>
+        match Part.toOption (A.run x r) with
+        | Option.some res => P res
+        | Option.none => false
+      )
+      (successCoins.card : ℝ) / (totalCoins : ℝ)
+
+end BitPPTAdversary
+end ProbabilisticSemantics
 
 end Crypto
 end TuringMachine

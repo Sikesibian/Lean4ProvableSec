@@ -1,4 +1,6 @@
 import ProvableSec.Defination.Baisc.Complexity.ComplexityClass
+import ProvableSec.Defination.Baisc.TuringMachine.TMCrypto
+import Mathlib.Algebra.BigOperators.Group.Finset.Basic
 import Mathlib.Data.Real.Basic
 
 /-!
@@ -41,8 +43,6 @@ namespace OneWayFunction
 open Complexity
 open TuringMachine.Crypto
 
-universe u v w
-
 /-- 比特串别名。 -/
 abbrev Bits : Type := Complexity.Bits
 
@@ -57,7 +57,6 @@ def IsNegligible (ε : Nat → ℝ) : Prop :=
 
 /--
 可高效计算的函数族接口（参数化按安全参数 `n`）。
-
 `eval n x` 表示安全参数为 `n` 时函数值。
 -/
 structure EfficientFamily where
@@ -74,147 +73,88 @@ OWF 常用函数族约束：在上面效率接口基础上加长度保持。
 structure OWFFamily extends EfficientFamily where
   lengthPreserving : ∀ n x, x.length = n → (eval n x).length = n
 
-section Semantics
-
-variable {K : Type u} {Λ : Type v} {σ : Type w}
-variable [DecidableEq K] [Inhabited Λ] [Inhabited σ]
+section SecurityGames
 
 /--
-反演实验语义接口：
-`inversionSuccessProb f A n` 表示对安全参数 `n`，
-PPT 反演器 `A` 针对函数族 `f` 的反演成功概率。
+**求逆实验 (Inversion Game) 概率的显式计算核心**
+
+`inversionSuccessProb F A n` 计算：
+在安全参数 `n` 下，PPT 敌手 `A` 对 `F` 成功求逆的概率。
+由于 $x$ 是均匀采样的，我们遍历所有长度为 $n$ 的比特串，
+并调用底层的 `probEvent` (已在内部遍历均匀随机币) 来计算期望成功率。
 -/
-structure OWFSemantics where
-  inversionSuccessProb : (Nat → Bits → Bits) → BitPPTAdversary K Λ σ → Nat → ℝ
-  inversionSuccessProb_range :
-    ∀ f A n,
-      0 ≤ inversionSuccessProb f A n ∧ inversionSuccessProb f A n ≤ 1
-
-/--
-- `f` 对应函数族 `(f_n)_n`。
-- `A` 对应 PPT 反演器。
-- `n` 对应安全参数。
-
-可将 `PrInv S f A n` 读作：
-在语义 `S` 下，反演器 `A` 对 `f` 在参数 `n` 的反演成功概率。
--/
-def PrInv (S : OWFSemantics (K := K) (Λ := Λ) (σ := σ))
-    (f : Nat → Bits → Bits) (A : BitPPTAdversary K Λ σ) (n : Nat) : ℝ :=
-  S.inversionSuccessProb f A n
-
-/-- 抽取某反演器在参数 `n` 处的成功概率。 -/
-def successProb (S : OWFSemantics (K := K) (Λ := Λ) (σ := σ))
-    (F : OWFFamily) (A : BitPPTAdversary K Λ σ) (n : Nat) : ℝ :=
-  PrInv (K := K) (Λ := Λ) (σ := σ) S F.eval A n
+noncomputable def inversionSuccessProb (F : OWFFamily) (A : BitPPTAdversary) (n : Nat) : ℝ :=
+  by
+  classical
+  exact
+    let inputs := allCoins n
+    let totalInputs := inputs.card
+    if totalInputs = 0 then 0 else
+      -- 遍历所有均匀选择的 x
+      let sumProbs : ℝ := inputs.sum (fun x =>
+        let y := F.eval n x
+        -- 对于特定的 x 及其对应的 y，敌手 A 能输出合法原像的概率
+        -- 注意：由于 P 必须是 DecidablePred，List Bool 的相等性天然满足。
+        BitPPTAdversary.probEvent A y (fun out => F.eval n out = y)
+      )
+      sumProbs / (totalInputs : ℝ)
 
 /-- 失败概率接口。 -/
-def failureProb (S : OWFSemantics (K := K) (Λ := Λ) (σ := σ))
-    (F : OWFFamily) (A : BitPPTAdversary K Λ σ) (n : Nat) : ℝ :=
-  1 - successProb (K := K) (Λ := Λ) (σ := σ) S F A n
+noncomputable def failureProb (F : OWFFamily) (A : BitPPTAdversary) (n : Nat) : ℝ :=
+  1 - inversionSuccessProb F A n
 
 /--
-weak OWF 定义：
+**weak OWF 定义：**
 任意 PPT 反演器都不能以“趋近 1 的概率”成功，
 至少有 `1/p(n)` 级别的失败间隙。
 -/
-def IsWeakOWF (S : OWFSemantics (K := K) (Λ := Λ) (σ := σ))
-    (F : OWFFamily) : Prop :=
-  ∀ A : BitPPTAdversary K Λ σ,
+def IsWeakOWF (F : OWFFamily) : Prop :=
+  ∀ A : BitPPTAdversary,
     ∃ p : Nat → Nat,
       IsPosPoly p ∧
       ∃ n0 : Nat,
         ∀ n : Nat, n ≥ n0 →
-          successProb (K := K) (Λ := Λ) (σ := σ) S F A n ≤ 1 - (1 : ℝ) / (p n : ℝ)
+          inversionSuccessProb F A n ≤ 1 - (1 : ℝ) / (p n : ℝ)
 
 /--
-`δ`-weak OWF 定义（显式间隙函数版本）。
-
-与 `IsWeakOWF` 的区别：
-- `IsWeakOWF` 采用“存在正值多项式 `p`，成功率 <= 1 - 1/p(n)`”形式。
-- `IsDeltaWeakOWF` 直接给定间隙 `δ(n)`，并要求成功率 <= `1 - δ(n)`。
+**δ-weak OWF 定义（显式间隙函数版本）：**
 -/
-def IsDeltaWeakOWF (S : OWFSemantics (K := K) (Λ := Λ) (σ := σ))
-    (F : OWFFamily) (δ : Nat → ℝ) : Prop :=
+def IsDeltaWeakOWF (F : OWFFamily) (δ : Nat → ℝ) : Prop :=
   (∀ n : Nat, 0 < δ n ∧ δ n ≤ 1) ∧
-    ∀ A : BitPPTAdversary K Λ σ,
+    ∀ A : BitPPTAdversary,
       ∃ n0 : Nat,
         ∀ n : Nat, n ≥ n0 →
-          successProb (K := K) (Λ := Λ) (σ := σ) S F A n ≤ 1 - δ n
+          inversionSuccessProb F A n ≤ 1 - δ n
 
 /--
-strong OWF 定义：
+**strong OWF 定义：**
 任意 PPT 反演器的成功概率关于安全参数是可忽略函数。
 -/
-def IsStrongOWF (S : OWFSemantics (K := K) (Λ := Λ) (σ := σ))
-    (F : OWFFamily) : Prop :=
-  ∀ A : BitPPTAdversary K Λ σ,
-    IsNegligible (fun n => successProb (K := K) (Λ := Λ) (σ := σ) S F A n)
+def IsStrongOWF (F : OWFFamily) : Prop :=
+  ∀ A : BitPPTAdversary,
+    IsNegligible (fun n => inversionSuccessProb F A n)
 
-/--
-密码学读者友好的符号接口层。
+/-- PPT 反演器别名。 -/
+abbrev Inverter : Type 1 :=
+  BitPPTAdversary
 
-该层不改变任何语义，仅提供更贴近教材的短记号：
+/-- 成功概率符号 `Pr`。 -/
+noncomputable def Pr (F : OWFFamily) (A : Inverter) (n : Nat) : ℝ :=
+  inversionSuccessProb F A n
 
-- `Inverter`：PPT 反演器。
-- `Pr`：反演成功概率。
-- `PrFail`：反演失败概率。
-- `Weak` / `Strong`：弱/强单向性的短名。
--/
-abbrev Inverter : Type (max u v w) :=
-  BitPPTAdversary K Λ σ
+/-- 失败概率符号 `PrFail`。 -/
+noncomputable def PrFail (F : OWFFamily) (A : Inverter) (n : Nat) : ℝ :=
+  failureProb F A n
 
-/-- `Pr S F A n`。 -/
-def Pr (S : OWFSemantics (K := K) (Λ := Λ) (σ := σ))
-    (F : OWFFamily) (A : Inverter (K := K) (Λ := Λ) (σ := σ)) (n : Nat) : ℝ :=
-  successProb (K := K) (Λ := Λ) (σ := σ) S F A n
+-- 确保证明和重写可以使用这些短记号等价替换
+theorem Pr_eq_inversionSuccessProb
+    (F : OWFFamily) (A : Inverter) (n : Nat) :
+    Pr F A n = inversionSuccessProb F A n := rfl
 
-/-- `PrFail S F A n`。 -/
-def PrFail (S : OWFSemantics (K := K) (Λ := Λ) (σ := σ))
-    (F : OWFFamily) (A : Inverter (K := K) (Λ := Λ) (σ := σ)) (n : Nat) : ℝ :=
-  failureProb (K := K) (Λ := Λ) (σ := σ) S F A n
-
-/-- 弱单向短记号。 -/
-abbrev Weak (S : OWFSemantics (K := K) (Λ := Λ) (σ := σ))
-    (F : OWFFamily) : Prop :=
-  IsWeakOWF (K := K) (Λ := Λ) (σ := σ) S F
-
-/-- 强单向短记号。 -/
-abbrev Strong (S : OWFSemantics (K := K) (Λ := Λ) (σ := σ))
-    (F : OWFFamily) : Prop :=
-  IsStrongOWF (K := K) (Λ := Λ) (σ := σ) S F
-
-/-- `Pr` 与 `successProb` 完全等价。 -/
-theorem Pr_eq_successProb
-    (S : OWFSemantics (K := K) (Λ := Λ) (σ := σ))
-    (F : OWFFamily) (A : Inverter (K := K) (Λ := Λ) (σ := σ)) (n : Nat) :
-    Pr (K := K) (Λ := Λ) (σ := σ) S F A n =
-      successProb (K := K) (Λ := Λ) (σ := σ) S F A n :=
-  rfl
-
-/-- `PrFail` 与 `failureProb` 完全等价。 -/
 theorem PrFail_eq_failureProb
-    (S : OWFSemantics (K := K) (Λ := Λ) (σ := σ))
-    (F : OWFFamily) (A : Inverter (K := K) (Λ := Λ) (σ := σ)) (n : Nat) :
-    PrFail (K := K) (Λ := Λ) (σ := σ) S F A n =
-      failureProb (K := K) (Λ := Λ) (σ := σ) S F A n :=
-  rfl
+    (F : OWFFamily) (A : Inverter) (n : Nat) :
+    PrFail F A n = failureProb F A n := rfl
 
-/-- `Weak` 是 `IsWeakOWF` 的阅读友好别名。 -/
-theorem Weak_iff
-    (S : OWFSemantics (K := K) (Λ := Λ) (σ := σ))
-    (F : OWFFamily) :
-    Weak (K := K) (Λ := Λ) (σ := σ) S F ↔
-      IsWeakOWF (K := K) (Λ := Λ) (σ := σ) S F :=
-  Iff.rfl
-
-/-- `Strong` 是 `IsStrongOWF` 的阅读友好别名。 -/
-theorem Strong_iff
-    (S : OWFSemantics (K := K) (Λ := Λ) (σ := σ))
-    (F : OWFFamily) :
-    Strong (K := K) (Λ := Λ) (σ := σ) S F ↔
-      IsStrongOWF (K := K) (Λ := Λ) (σ := σ) S F :=
-  Iff.rfl
-
-end Semantics
+end SecurityGames
 
 end OneWayFunction

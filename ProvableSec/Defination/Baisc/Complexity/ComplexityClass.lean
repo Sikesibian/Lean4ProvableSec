@@ -48,8 +48,6 @@ namespace Complexity
 
 open TuringMachine.Crypto
 
-universe u v w
-
 /-- 比特串输入类型。 -/
 abbrev Bits : Type := List Bool
 
@@ -68,37 +66,39 @@ variable [DecidableEq K] [Inhabited Λ] [Inhabited σ]
 
 /-- 多项式时间确定性判定器接口。 -/
 structure PolyTimeDecider where
-  adv : BitAdversary K Λ σ
+  adv : BitAdversary
   timeBound : Nat → Nat
-  timeBound_poly : IsPolynomial timeBound
-  halts_timeBound :
+  timeBoundPoly : IsPolynomial timeBound
+  haltsAtBound :
     ∀ n (x : Bits),
       x.length = n →
-      (adv.runFor (steps := timeBound n) x []).l = none
+      -- 显式解包底层参数执行验证
+      (@Adversary.runForSteps adv.K adv.Λ adv.σ Bool adv.adv adv.decK adv.inhΛ adv.inhσ (timeBound n) x []).l = none
 
 namespace PolyTimeDecider
 
 /-- 在时间界处读取输出串（随机币固定为 `[]`）。 -/
-def outputAtBound (D : PolyTimeDecider (K := K) (Λ := Λ) (σ := σ)) (x : Bits) : Bits :=
-  D.adv.outputAfter (steps := D.timeBound x.length) x []
+def outputAtBound (D : PolyTimeDecider) (x : Bits) : Bits :=
+  (@Adversary.runForSteps D.adv.K D.adv.Λ D.adv.σ Bool D.adv.adv D.adv.decK D.adv.inhΛ D.adv.inhσ
+    (D.timeBound x.length) x []).stk D.adv.adv.outputStack
 
 /-- 在时间界处读取判定位。 -/
-def acceptBit (D : PolyTimeDecider (K := K) (Λ := Λ) (σ := σ)) (x : Bits) : Bool :=
+def acceptBit (D : PolyTimeDecider) (x : Bits) : Bool :=
   outputBit (D.outputAtBound x)
 
 /-- 判定器在输入 `x` 上接受。 -/
-def accepts (D : PolyTimeDecider (K := K) (Λ := Λ) (σ := σ)) (x : Bits) : Prop :=
+def accepts (D : PolyTimeDecider) (x : Bits) : Prop :=
   D.acceptBit x = true
 
 /-- 判定器在输入 `x` 上拒绝。 -/
-def rejects (D : PolyTimeDecider (K := K) (Λ := Λ) (σ := σ)) (x : Bits) : Prop :=
+def rejects (D : PolyTimeDecider) (x : Bits) : Prop :=
   D.acceptBit x = false
 
 /-- 该判定器正确判定语言 `L`。 -/
-def DecidesLanguage (D : PolyTimeDecider (K := K) (Λ := Λ) (σ := σ)) (L : Language) : Prop :=
+def DecidesLanguage (D : PolyTimeDecider) (L : Language) : Prop :=
   ∀ x, D.accepts x ↔ x ∈ L
 
-theorem accepts_or_rejects (D : PolyTimeDecider (K := K) (Λ := Λ) (σ := σ)) (x : Bits) :
+theorem accepts_or_rejects (D : PolyTimeDecider) (x : Bits) :
     D.accepts x ∨ D.rejects x := by
   unfold accepts rejects acceptBit
   cases outputBit (D.outputAtBound x) <;> simp
@@ -107,7 +107,7 @@ end PolyTimeDecider
 
 /-- 固定机器宇宙参数下的 `P`。 -/
 def IsInP (L : Language) : Prop :=
-  ∃ D : PolyTimeDecider (K := K) (Λ := Λ) (σ := σ), D.DecidesLanguage L
+  ∃ D : PolyTimeDecider, D.DecidesLanguage L
 
 /-- 见证编码接口。 -/
 structure PairEncoding where
@@ -119,7 +119,7 @@ def trivialPairEncoding : PairEncoding :=
 
 /-- `NP` 验证器接口。 -/
 structure NPVerifier where
-  decider : PolyTimeDecider (K := K) (Λ := Λ) (σ := σ)
+  decider : PolyTimeDecider
   encoding : PairEncoding
   witnessBound : Nat → Nat
   witnessBound_poly : IsPolynomial witnessBound
@@ -127,12 +127,12 @@ structure NPVerifier where
 namespace NPVerifier
 
 /-- 验证器在输入 `x` 和见证 `w` 上接受。 -/
-def acceptsWithWitness (V : NPVerifier (K := K) (Λ := Λ) (σ := σ))
+def acceptsWithWitness (V : NPVerifier)
     (x w : Bits) : Prop :=
   V.decider.accepts (V.encoding.encode x w)
 
 /-- 验证器 `V` 对语言 `L` 的验证正确性。 -/
-def VerifiesLanguage (V : NPVerifier (K := K) (Λ := Λ) (σ := σ)) (L : Language) : Prop :=
+def VerifiesLanguage (V : NPVerifier) (L : Language) : Prop :=
   ∀ x,
     x ∈ L ↔
       ∃ w : Bits, w.length ≤ V.witnessBound x.length ∧ V.acceptsWithWitness x w
@@ -141,7 +141,7 @@ end NPVerifier
 
 /-- 固定机器宇宙参数下的 `NP`。 -/
 def IsInNP (L : Language) : Prop :=
-  ∃ V : NPVerifier (K := K) (Λ := Λ) (σ := σ), V.VerifiesLanguage L
+  ∃ V : NPVerifier, V.VerifiesLanguage L
 
 /-- 语言补集。 -/
 def complement (L : Language) : Language :=
@@ -149,12 +149,10 @@ def complement (L : Language) : Language :=
 
 /-- 固定机器宇宙参数下的 `coNP`。 -/
 def IsIncoNP (L : Language) : Prop :=
-  IsInNP (K := K) (Λ := Λ) (σ := σ) (complement L)
+  IsInNP (complement L)
 
 /-- 把 `P` 判定器提升为 `NP` 验证器（忽略见证）。 -/
-def pDeciderToNPVerifier
-    (D : PolyTimeDecider (K := K) (Λ := Λ) (σ := σ)) :
-    NPVerifier (K := K) (Λ := Λ) (σ := σ) where
+def pDeciderToNPVerifier (D : PolyTimeDecider) : NPVerifier where
   decider := D
   encoding := trivialPairEncoding
   witnessBound := fun _ => 0
@@ -164,10 +162,10 @@ def pDeciderToNPVerifier
     simp
 
 theorem pDeciderToNPVerifier_correct
-    (D : PolyTimeDecider (K := K) (Λ := Λ) (σ := σ))
+    (D : PolyTimeDecider)
     (L : Language)
     (hD : D.DecidesLanguage L) :
-    (pDeciderToNPVerifier (K := K) (Λ := Λ) (σ := σ) D).VerifiesLanguage L := by
+    (pDeciderToNPVerifier D).VerifiesLanguage L := by
   intro x
   constructor
   · intro hx
@@ -182,55 +180,48 @@ theorem pDeciderToNPVerifier_correct
     exact (hD x).1 hAccD
 
 theorem p_subset_np {L : Language}
-    (hP : IsInP (K := K) (Λ := Λ) (σ := σ) L) :
-    IsInNP (K := K) (Λ := Λ) (σ := σ) L := by
+    (hP : IsInP L) :
+    IsInNP L := by
   rcases hP with ⟨D, hD⟩
-  exact ⟨pDeciderToNPVerifier (K := K) (Λ := Λ) (σ := σ) D,
-    pDeciderToNPVerifier_correct (K := K) (Λ := Λ) (σ := σ) D L hD⟩
+  exact ⟨pDeciderToNPVerifier D, pDeciderToNPVerifier_correct D L hD⟩
 
 end Deterministic
 
-/-- 机器宇宙参数存在化后的 `P`。 -/
-def IsInPAny (L : Language) : Prop :=
-  ∃ (K : Type u) (Λ : Type v) (σ : Type w)
-    (hK : DecidableEq K) (hΛ : Inhabited Λ) (hσ : Inhabited σ),
-      @IsInP K Λ σ hK hΛ hσ L
+-- /-- 机器宇宙参数存在化后的 `P`。 -/
+-- def IsInPAny (L : Language) : Prop :=
+--   ∃ (K : Type u) (Λ : Type v) (σ : Type w)
+--     (hK : DecidableEq K) (hΛ : Inhabited Λ) (hσ : Inhabited σ),
+--       @IsInP K Λ σ hK hΛ hσ L
 
-/-- 机器宇宙参数存在化后的 `NP`。 -/
-def IsInNPAny (L : Language) : Prop :=
-  ∃ (K : Type u) (Λ : Type v) (σ : Type w)
-    (hK : DecidableEq K) (hΛ : Inhabited Λ) (hσ : Inhabited σ),
-      @IsInNP K Λ σ hK hΛ hσ L
+-- /-- 机器宇宙参数存在化后的 `NP`。 -/
+-- def IsInNPAny (L : Language) : Prop :=
+--   ∃ (K : Type u) (Λ : Type v) (σ : Type w)
+--     (hK : DecidableEq K) (hΛ : Inhabited Λ) (hσ : Inhabited σ),
+--       @IsInNP K Λ σ hK hΛ hσ L
 
-/-- 机器宇宙参数存在化后的 `coNP`。 -/
-def IsIncoNPAny (L : Language) : Prop :=
-  ∃ (K : Type u) (Λ : Type v) (σ : Type w)
-    (hK : DecidableEq K) (hΛ : Inhabited Λ) (hσ : Inhabited σ),
-      @IsIncoNP K Λ σ hK hΛ hσ L
+-- /-- 机器宇宙参数存在化后的 `coNP`。 -/
+-- def IsIncoNPAny (L : Language) : Prop :=
+--   ∃ (K : Type u) (Λ : Type v) (σ : Type w)
+--     (hK : DecidableEq K) (hΛ : Inhabited Λ) (hσ : Inhabited σ),
+--       @IsIncoNP K Λ σ hK hΛ hσ L
 
 section Randomized
 
-variable {K : Type u} {Λ : Type v} {σ : Type w}
-variable [DecidableEq K] [Inhabited Λ] [Inhabited σ]
-
 /-- 概率判定器别名：复用现有 `BitPPTAdversary`。 -/
-abbrev PPTDecider : Type (max u v w) :=
-  BitPPTAdversary K Λ σ
+abbrev PPTDecider : Type 1 := BitPPTAdversary
 
 /-- 在时间界处（给定随机币）读取输出串。 -/
-def pptOutputAtBound (A : PPTDecider (K := K) (Λ := Λ) (σ := σ))
-    (x r : Bits) : Bits :=
-  A.adv.outputAfter (steps := A.timeBound x.length) x r
+def pptOutputAtBound (A : PPTDecider) (x r : Bits) : Bits :=
+  (@Adversary.runForSteps A.K A.Λ A.σ Bool A.adv A.decK A.inhΛ A.inhσ
+    (A.timeBound x.length) x r).stk A.adv.outputStack
 
 /-- 在时间界处（给定随机币）读取判定位。 -/
-def pptAcceptBitAtBound (A : PPTDecider (K := K) (Λ := Λ) (σ := σ))
-    (x r : Bits) : Bool :=
-  outputBit (pptOutputAtBound (K := K) (Λ := Λ) (σ := σ) A x r)
+def pptAcceptBitAtBound (A : PPTDecider) (x r : Bits) : Bool :=
+  outputBit (pptOutputAtBound A x r)
 
 /-- 在固定随机币下是否接受。 -/
-def pptAcceptsWithCoins (A : PPTDecider (K := K) (Λ := Λ) (σ := σ))
-    (x r : Bits) : Prop :=
-  pptAcceptBitAtBound (K := K) (Λ := Λ) (σ := σ) A x r = true
+def pptAcceptsWithCoins (A : PPTDecider) (x r : Bits) : Prop :=
+  pptAcceptBitAtBound A x r = true
 
 /--
 `BPP` 见证接口：
@@ -242,7 +233,7 @@ def pptAcceptsWithCoins (A : PPTDecider (K := K) (Λ := Λ) (σ := σ))
 该结构是接口层，`acceptProb` 与机器执行语义的精确连接可在概率模块中继续构造。
 -/
 structure BPPWitness (L : Language) where
-  decider : PPTDecider (K := K) (Λ := Λ) (σ := σ)
+  decider : PPTDecider
   acceptProb : Bits → ℝ
   acceptProb_range : ∀ x, 0 ≤ acceptProb x ∧ acceptProb x ≤ 1
   completeness : ∀ x, x ∈ L → (2 : ℝ) / 3 ≤ acceptProb x
@@ -250,7 +241,7 @@ structure BPPWitness (L : Language) where
 
 /-- 固定机器宇宙参数下的 `BPP` 接口类。 -/
 def IsInBPP (L : Language) : Prop :=
-  Nonempty (BPPWitness (K := K) (Λ := Λ) (σ := σ) L)
+  Nonempty (BPPWitness L)
 
 /--
 PPT 函数族接口：
@@ -258,14 +249,14 @@ PPT 函数族接口：
 - 输出长度有多项式上界
 -/
 structure PPTFunctionFamily where
-  algorithm : PPTDecider (K := K) (Λ := Λ) (σ := σ)
+  algorithm : PPTDecider
   outLenBound : Nat → Nat
-  outLenBound_poly : IsPolynomial outLenBound
+  outLenBoundPoly : IsPolynomial outLenBound
   output_len_bound :
     ∀ n (x r : Bits),
       x.length = n →
       r.length = algorithm.coinLength n →
-      (algorithm.adv.outputAfter (steps := algorithm.timeBound n) x r).length ≤ outLenBound n
+      (pptOutputAtBound algorithm x r).length ≤ outLenBound n
 
 end Randomized
 

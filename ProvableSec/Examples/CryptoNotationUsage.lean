@@ -1,99 +1,44 @@
 import ProvableSec.Defination.CryptoNotation
-import ProvableSec.ClassicTheorem.YaoTheorem
 
 /-!
-# CryptoNotation Usage Examples
+# CryptoNotation Usage Examples / 记号使用与对象化演示
 
-中文：展示如何使用全局概率语义接口，以及如何在 Yao 层调用 OWF 叙述。
-English: show usage of global probability semantics and Yao-layer OWF statements.
+展示如何使用顶层密码学抽象接口、scoped notation 语法糖，
+以及如同面向对象编程一般丝滑的硬度放大调用。
 -/
 
-namespace ProvableSec.Examples
+namespace ProvableSec.Examples.Usage
 
 open ProvableSec.CryptoNotation
 open scoped CryptoNotation
 
-section GlobalSemanticsUsage
+section ProbabilityNotations
 
-variable (C : Context)
-variable (M : Context.Model C)
-variable (A : Context.Adversary C)
+variable (F : OWFFamily)
+variable (A : Inverter)
 variable (n : Nat)
 
-example :
-    PrFail[M](A, n) = 1 - Pr[M](A, n) := by
-  simpa using M.PrFail_eq A n
+/-- 1. 语法糖直接转化为底层的概率等式。 -/
+example : PrFail[F](A, n) = 1 - Pr[F](A, n) := by
+  exact OneWayFunction.PrFail_eq_failureProb F A n
 
-example :
-    0 ≤ Pr[M](A, n) := by
-  simpa using M.Pr_nonneg A n
+/-- 2. 使用间隙参数的弱单向性简写。 -/
+example (δ : Nat → ℝ) : DeltaWeak F δ ↔ OneWayFunction.IsDeltaWeakOWF F δ := by
+  rfl
 
-example :
-    Pr[M](A, n) ≤ 1 := by
-  simpa using M.Pr_le_one A n
+end ProbabilityNotations
 
-end GlobalSemanticsUsage
+section ObjectOrientedAmplification
 
-section OWFProbabilityNotationUsage
+/-- 3. 展示弱到强 (wOWF 到 sOWF) 的过程。
 
-variable (C : Context)
-variable (M : Context.OWF.Model C)
-variable (f : Context.OWF.OWFunction)
-variable (A : Context.OWF.Adversary C)
-variable (n : Nat)
+在使用姚氏定理（Yao's Theorem）进行推导时，只需 `w.amplify Yao`，Lean 4 的类型系统会自动强制校验定理的前提。
+-/
+def applyYaoTransform
+    (w : wOWF)
+    (Yao : WeakToStrongTransform) : sOWF :=
+  w.amplify Yao
 
-example :
-    PrFail[M|f](A, n) = 1 - Pr[M|f](A, n) := by
-  simpa using M.PrFail_eq f A n
+end ObjectOrientedAmplification
 
-example :
-    0 ≤ Pr[M|f](A, n) := by
-  simpa using M.Pr_nonneg f A n
-
-example :
-    Pr[M|f](A, n) ≤ 1 := by
-  simpa using M.Pr_le_one f A n
-
-end OWFProbabilityNotationUsage
-
-section YaoUsage
-
-variable (C : Context)
-variable (M : Context.Yao.Model C)
-variable (R : Context.Yao.ReductionSpec C M)
-variable (hRed : Context.Yao.ReductionCorrect C M R)
-variable (T : Context.Yao.Family → Context.Yao.Family)
-variable (hT :
-  ∀ F : Context.Yao.Family,
-    Context.Yao.WeakOWF C M F → Context.Yao.StrongOWF C M (T F))
-variable (H : Context.Yao.TextbookYaoHypothesis C M)
-variable (f : Context.Yao.Family)
-
-example :
-    Context.Yao.weak_to_strong_transform C M := by
-  exact ⟨T, hT⟩
-
-example :
-    Context.Yao.weak_to_strong_existential C M := by
-  exact Context.Yao.transform_implies_existential C M ⟨T, hT⟩
-
-example :
-    Context.Yao.WeakOWF C M f →
-      Context.Yao.StrongOWF C M (H.lift f) := by
-  exact Context.Yao.textbook_yao_of_hyp C M H f
-
-example :
-    Context.Yao.LiftSound C M R := by
-  exact Context.Yao.reductionCorrect_implies_liftSound C M R hRed
-
-example :
-    Context.Yao.weak_to_strong_transform C M := by
-  exact Context.Yao.reductionCorrect_implies_transform C M R hRed
-
-example :
-    Context.Yao.weak_to_strong_existential C M := by
-  exact Context.Yao.reductionCorrect_implies_existential C M R hRed
-
-end YaoUsage
-
-end ProvableSec.Examples
+end ProvableSec.Examples.Usage
